@@ -27,8 +27,8 @@ async def detail_repo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     if len(context.args) < 2:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="Por favor, ingresa el nombre de usuario y el repositorio de GitHub después del comando.\n Ejemplo: `/detalles_repo aidam sistemagym`",
-            parse_mode='MarkdownV2'
+            text="Por favor, ingresa el nombre de usuario y el repositorio de GitHub después del comando.\n Ejemplo: /detalles_repo <b>usuario</b> <b>repositorio</b>",
+            parse_mode='HTML'
         )
         return
 
@@ -37,6 +37,8 @@ async def detail_repo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     try:
         repo_data = detail_repo(username, repository)
+        readme = get_readme(username, repository)
+        structure = get_repo_structure(username, repository)
         
         # Guardamos la información en user_data para el callback de HTML
         context.user_data['current_repo'] = {
@@ -45,18 +47,50 @@ async def detail_repo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             'data': repo_data
         }
 
-        prompt = f"Analiza el siguiente repositorio de GitHub y utiliza las caracteristicas principales para desarrollar un informe estructurado: {repo_data['url']}"
+        prompt = f"""Analiza el siguiente repositorio de GitHub y desarrolla un informe estructurado.
+        
+        INFORMACIÓN DEL PROYECTO:
+        - Nombre: {repo_data.get('name', repository)}
+        - Descripción: {repo_data.get('description', 'Sin descripción')}
+        - Estrellas: {repo_data.get('stars', 0)} | Forks: {repo_data.get('forks', 0)}
+        - Lenguajes: {', '.join(repo_data.get('list_languages', []))}
+        - URL: {repo_data.get('url', '')}
+        
+        ESTRUCTURA DEL REPOSITORIO (primeros archivos):
+        {structure}
+        
+        README (resumen):
+        {readme[:2000]}
+        
+        Usa esta información para generar un análisis preciso y detallado del repositorio.
+        Asegúrate de formatear la respuesta correctamente en Markdown.
+        """
         
         response_model = mistral_model(prompt)
         formatted_response = escape_markdown(response_model)
 
         # Telegram tiene un límite de 4096 caracteres por mensaje.
-        # Si la respuesta es más larga, la dividimos en partes.
-        MAX_LENGTH = 4096
+        # Si la respuesta es más larga, la dividimos por párrafos para no romper el Markdown.
+        MAX_LENGTH = 4000
         if len(formatted_response) > MAX_LENGTH:
-            for i in range(0, len(formatted_response), MAX_LENGTH):
-                part = formatted_response[i:i + MAX_LENGTH]
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=part, parse_mode='MarkdownV2')
+            paragraphs = formatted_response.split('\n\n')
+            current_message = ""
+            for p in paragraphs:
+                # Si un solo párrafo es más grande que MAX_LENGTH, lo cortamos (caso extremo)
+                if len(p) > MAX_LENGTH:
+                    if current_message:
+                        await context.bot.send_message(chat_id=update.effective_chat.id, text=current_message, parse_mode='MarkdownV2')
+                        current_message = ""
+                    for i in range(0, len(p), MAX_LENGTH):
+                        await context.bot.send_message(chat_id=update.effective_chat.id, text=p[i:i+MAX_LENGTH], parse_mode='MarkdownV2')
+                elif len(current_message) + len(p) + 2 > MAX_LENGTH:
+                    await context.bot.send_message(chat_id=update.effective_chat.id, text=current_message, parse_mode='MarkdownV2')
+                    current_message = p + "\n\n"
+                else:
+                    current_message += p + "\n\n"
+            
+            if current_message.strip():
+                await context.bot.send_message(chat_id=update.effective_chat.id, text=current_message, parse_mode='MarkdownV2')
         else:
             await context.bot.send_message(chat_id=update.effective_chat.id, text=formatted_response, parse_mode='MarkdownV2')
 

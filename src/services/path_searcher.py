@@ -10,7 +10,7 @@ def list_projects(base_path):
     proyects = set()
 
     for root, dirs, arch in os.walk(base_path):
-        if 'requirements.txt' in arch or 'venv' in arch:
+        if 'requirements.txt' in arch or 'venv' in arch or '.gitignore' in arch or 'README.md' in arch:
             proyects.add(root)
         
     return list(proyects)
