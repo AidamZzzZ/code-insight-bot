@@ -1,5 +1,4 @@
 import os
-
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -10,7 +9,7 @@ def list_projects(base_path):
     proyects = set()
 
     for root, dirs, arch in os.walk(base_path):
-        if 'requirements.txt' in arch or 'venv' in arch or '.gitignore' in arch or 'README.md' in arch:
+        if 'requirements.txt' in arch or 'venv' in arch or 'README.md' in arch or 'docker-compose.yml' in arch:
             proyects.add(root)
         
     return list(proyects)
@@ -62,4 +61,87 @@ def get_local_languages(project_path):
             if ext in extensions:
                 found_langs.add(extensions[ext])
     return list(found_langs) if found_langs else ["Unknown"]
-        
+
+
+# Extensiones de archivos fuente considerados "código principal"
+SOURCE_EXTENSIONS = {
+    '.py', '.js', '.ts', '.jsx', '.tsx', '.go', '.java',
+    '.rb', '.rs', '.php', '.c', '.cpp', '.kt', '.swift'
+}
+# Archivos de configuración relevantes que aportan contexto
+CONFIG_FILES = {
+    'package.json', 'requirements.txt', 'pyproject.toml',
+    'setup.py', 'setup.cfg', 'Cargo.toml', 'go.mod',
+    'pom.xml', 'build.gradle', 'Dockerfile', 'docker-compose.yml',
+    '.env.example', 'config.py', 'settings.py'
+}
+
+
+def get_local_source_code(project_path: str, max_chars_per_file: int = 2500, max_total_chars: int = 20000) -> str:
+    """Extrae el contenido real de los archivos fuente más relevantes del proyecto.
+
+    Agrupa los archivos por directorio (módulo) y captura:
+    - Archivos de configuración clave (package.json, requirements.txt, etc.)
+    - Archivos de código fuente principales (limitados para no sobrepasar el contexto del LLM)
+
+    Returns:
+        Un string con secciones por módulo y fragmentos de código de cada archivo.
+    """
+    ignore_dirs = {'.git', 'venv', '.venv', '__pycache__', 'node_modules',
+                   'dist', 'build', '.mypy_cache', '.pytest_cache', 'coverage'}
+
+    sections = {}
+    total_chars = 0
+
+    for root, dirs, files in os.walk(project_path):
+        # Filtrar directorios ignorados in-place para no descender en ellos
+        dirs[:] = [d for d in dirs if d not in ignore_dirs]
+
+        relative_module = os.path.relpath(root, project_path)
+        if relative_module == '.':
+            relative_module = '(raíz del proyecto)'
+
+        for filename in sorted(files):
+            filepath = os.path.join(root, filename)
+            _, ext = os.path.splitext(filename)
+
+            is_source = ext in SOURCE_EXTENSIONS
+            is_config = filename in CONFIG_FILES
+
+            if not (is_source or is_config):
+                continue
+
+            if total_chars >= max_total_chars:
+                break
+
+            try:
+                with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+            except Exception:
+                continue
+
+            # Recortar el contenido del archivo si es muy largo
+            if len(content) > max_chars_per_file:
+                content = content[:max_chars_per_file] + f"\n... [archivo truncado, {len(content)} chars totales]"
+
+            if relative_module not in sections:
+                sections[relative_module] = []
+
+            sections[relative_module].append((filename, content))
+            total_chars += len(content)
+
+        if total_chars >= max_total_chars:
+            break
+
+    # Formatear la salida en texto estructurado
+    output_parts = []
+    for module, files_list in sections.items():
+        output_parts.append(f"\n=== MÓDULO: {module} ===")
+        for fname, fcontent in files_list:
+            output_parts.append(f"\n--- Archivo: {fname} ---")
+            output_parts.append(fcontent)
+
+    if not output_parts:
+        return "No se encontraron archivos fuente en el proyecto."
+
+    return "\n".join(output_parts)

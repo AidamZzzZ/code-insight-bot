@@ -1,10 +1,9 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from services.analyzer import list_repo_user, detail_repo, get_readme, get_repo_structure
-from services.path_searcher import list_projects, BASE_DIR, get_local_readme, get_local_structure, get_local_languages
-from agent.agent import mistral_model, generate_html_manual
+from services.path_searcher import list_projects, BASE_DIR, get_local_readme, get_local_structure, get_local_languages, get_local_source_code
+from agent.agent import mistral_model, generate_pdf_manual
 import os
-import tempfile
 from tools.format_scape import escape_markdown
 
 # handler para comando start
@@ -97,14 +96,14 @@ async def detail_repo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Menú de selección para descargar informe HTML
         keyboard = [
             [
-                InlineKeyboardButton("Descargar informe (.HTML)", callback_data='download_html'),
+                InlineKeyboardButton("Descargar manual (.PDF)", callback_data='download_html'),
                 InlineKeyboardButton("No, gracias", callback_data='cancel_download')
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text="¿Te gustaría descargar este análisis en formato HTML?",
+            text="¿Te gustaría descargar este análisis en formato PDF?",
             reply_markup=reply_markup
         )
 
@@ -124,7 +123,7 @@ async def html_selection_callback(update: Update, context: ContextTypes.DEFAULT_
             await query.edit_message_text(text="Lo siento, perdí la referencia al repositorio. Por favor, solicita los detalles de nuevo.")
             return
 
-        await query.edit_message_text(text="Generando tu manual técnico funcional... 📄")
+        await query.edit_message_text(text="Generando tu manual técnico en PDF... 📄")
 
         username = repo_info['username']
         repository = repo_info['repository']
@@ -134,35 +133,22 @@ async def html_selection_callback(update: Update, context: ContextTypes.DEFAULT_
             readme = get_readme(username, repository)
             structure = get_repo_structure(username, repository)
             
-            html_content = generate_html_manual(repo_data, readme, structure)
-            
-            # Limpiar el contenido si el modelo devuelve bloques de código markdown
-            if "```html" in html_content:
-                html_content = html_content.split("```html")[1].split("```")[0].strip()
-            elif "```" in html_content:
-                html_content = html_content.split("```")[1].split("```")[0].strip()
+            pdf_path = generate_pdf_manual(repo_data, readme, structure)
 
-            # Crear un archivo temporal
-            filename = f"manual_{repository}.html"
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
-                tmp.write(html_content.encode('utf-8'))
-                tmp_path = tmp.name
-
-            # Enviar el archivo
-            with open(tmp_path, 'rb') as doc:
+            filename = f"manual_{repository}.pdf"
+            with open(pdf_path, 'rb') as doc:
                 await context.bot.send_document(
                     chat_id=update.effective_chat.id,
                     document=doc,
                     filename=filename,
-                    caption=f"Aquí tienes tu manual interactivo para {repository}. ¡Disfrútalo! ✨"
+                    caption=f"Aquí tienes tu manual técnico para {repository}. ¡Disfrútalo! ✨"
                 )
             
-            # Eliminar archivo temporal
-            os.remove(tmp_path)
+            os.remove(pdf_path)
             
         except Exception as e:
-            print(f"Error generando HTML: {e}")
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="Hubo un error al generar el manual HTML.")
+            print(f"Error generando PDF: {e}")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="Hubo un error al generar el manual PDF.")
 
     elif query.data.startswith('select_proj:'):
         project_name = query.data.split('select_proj:')[1]
@@ -180,8 +166,8 @@ async def html_selection_callback(update: Update, context: ContextTypes.DEFAULT_
             readme = get_local_readme(project_path)
             structure = get_local_structure(project_path)
             languages = get_local_languages(project_path)
+            source_code = get_local_source_code(project_path)
             
-            # Crear un repo_data ficticio para la función generate_html_manual
             repo_data = {
                 'name': project_name,
                 'description': 'Proyecto analizado localmente desde el servidor.',
@@ -191,38 +177,26 @@ async def html_selection_callback(update: Update, context: ContextTypes.DEFAULT_
                 'url': project_path
             }
 
-            # Generar el HTML
-            html_content = generate_html_manual(repo_data, readme, structure)
+            # Generar el PDF
+            pdf_path = generate_pdf_manual(repo_data, readme, structure, source_code)
 
-            # Limpiar bloques de código
-            if "```html" in html_content:
-                html_content = html_content.split("```html")[1].split("```")[0].strip()
-            elif "```" in html_content:
-                html_content = html_content.split("```")[1].split("```")[0].strip()
-
-            # Crear archivo temporal
-            filename = f"manual_local_{project_name}.html"
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp:
-                tmp.write(html_content.encode('utf-8'))
-                tmp_path = tmp.name
-
-            # Enviar archivo
-            with open(tmp_path, 'rb') as doc:
+            filename = f"manual_local_{project_name}.pdf"
+            with open(pdf_path, 'rb') as doc:
                 await context.bot.send_document(
                     chat_id=update.effective_chat.id,
                     document=doc,
                     filename=filename,
-                    caption=f"Manual técnico generado para el proyecto local: {project_name} 🚀"
+                    caption=f"Manual técnico PDF generado para: {project_name} 🚀"
                 )
 
-            os.remove(tmp_path)
+            os.remove(pdf_path)
 
         except Exception as e:
             print(f"Error en análisis local: {e}")
             await context.bot.send_message(chat_id=update.effective_chat.id, text="Hubo un error al analizar el proyecto local.")
 
     elif query.data == 'cancel_download':
-        await query.edit_message_text(text="Entendido, no se generará el archivo HTML.")
+        await query.edit_message_text(text="Entendido, no se generará el archivo PDF.")
 
 
 # handler para listar repositorioos
